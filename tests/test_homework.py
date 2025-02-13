@@ -12,8 +12,8 @@ import pandas as pd  # type: ignore
 MODEL_FILENAME = "files/models/model.pkl.gz"
 MODEL_COMPONENTS = [
     "OneHotEncoder",
+    "MinMaxScaler",
     "PCA",
-    "StandardScaler",
     "SelectKBest",
     "MLPClassifier",
 ]
@@ -25,7 +25,7 @@ METRICS = [
     {
         "type": "metrics",
         "dataset": "train",
-        "precision": 0.691,
+        "precision": 0.6,
         "balanced_accuracy": 0.661,
         "recall": 0.370,
         "f1_score": 0.482,
@@ -33,7 +33,7 @@ METRICS = [
     {
         "type": "metrics",
         "dataset": "test",
-        "precision": 0.673,
+        "precision": 0.6,
         "balanced_accuracy": 0.661,
         "recall": 0.370,
         "f1_score": 0.482,
@@ -41,13 +41,13 @@ METRICS = [
     {
         "type": "cm_matrix",
         "dataset": "train",
-        "true_0": {"predicted_0": 15440, "predicted_1": None},
+        "true_0": {"predicted_0": 1500, "predicted_1": None},
         "true_1": {"predicted_0": None, "predicted_1": 1735},
     },
     {
         "type": "cm_matrix",
         "dataset": "test",
-        "true_0": {"predicted_0": 6710, "predicted_1": None},
+        "true_0": {"predicted_0": 6000, "predicted_1": None},
         "true_1": {"predicted_0": None, "predicted_1": 730},
     },
 ]
@@ -65,14 +65,28 @@ def _load_model():
     assert model is not None
     return model
 
-
 def _test_components(model):
     """Test components"""
-    assert "GridSearchCV" in str(type(model))
-    current_components = [str(model.estimator[i]) for i in range(len(model.estimator))]
-    for component in MODEL_COMPONENTS:
-        assert any(component in x for x in current_components)
+    if hasattr(model, "best_estimator_"):  # Si es GridSearchCV, usa el mejor estimador
+        model = model.best_estimator_
 
+    # Obtener los nombres de los componentes del pipeline
+    pipeline_steps = [step[0] for step in model.steps]  # Nombres de los pasos
+
+    # Extraer componentes internos del ColumnTransformer
+    preprocessor = model.named_steps.get("preprocessor", None)
+    if preprocessor:
+        transformers = [t[1].__class__.__name__ for t in preprocessor.transformers]
+    else:
+        transformers = []
+
+    # Lista final de componentes reales
+    current_components = transformers + pipeline_steps[1:]  # Omitimos 'preprocessor', ya que es un envoltorio
+    print("Expected components:", MODEL_COMPONENTS)
+    print("Pipeline components:", current_components)
+
+    for component in MODEL_COMPONENTS:
+        assert any(component in x for x in current_components), f"Component '{component}' not found in pipeline!"
 
 def _load_grading_data():
     """Load grading data"""

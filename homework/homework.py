@@ -96,3 +96,105 @@
 # {'type': 'cm_matrix', 'dataset': 'train', 'true_0': {"predicted_0": 15562, "predicte_1": 666}, 'true_1': {"predicted_0": 3333, "predicted_1": 1444}}
 # {'type': 'cm_matrix', 'dataset': 'test', 'true_0': {"predicted_0": 15562, "predicte_1": 650}, 'true_1': {"predicted_0": 2490, "predicted_1": 1420}}
 #
+import os
+import gzip
+import json
+import numpy as np
+import pandas as pd
+from sklearn.compose import ColumnTransformer
+from sklearn.pipeline import Pipeline
+from sklearn.decomposition import PCA
+from sklearn.preprocessing import OneHotEncoder, MinMaxScaler
+from sklearn.feature_selection import SelectKBest, f_classif
+from sklearn.neural_network import MLPClassifier
+from sklearn.model_selection import train_test_split, cross_val_score
+from sklearn.metrics import precision_score, recall_score, f1_score, balanced_accuracy_score, confusion_matrix
+
+# Directorios
+data_dir = "files/input/"
+output_dir = "files/output/"
+model_path = "files/models/model.pkl.gz"
+metrics_path = "files/output/metrics.json"
+
+# Cargar datos
+train_data = pd.read_csv(os.path.join(data_dir, "train_default_of_credit_card_clients.csv"))
+test_data = pd.read_csv(os.path.join(data_dir, "test_default_of_credit_card_clients.csv"))
+
+# Paso 1: Limpieza de datos
+def clean_data(df):
+    df = df.rename(columns={"default payment next month": "default"})
+    df = df.drop(columns=["ID"], errors='ignore')
+    df = df.dropna()
+    df["EDUCATION"] = df["EDUCATION"].apply(lambda x: 4 if x > 4 else x)
+    return df
+
+train_data = clean_data(train_data)
+test_data = clean_data(test_data)
+
+# Paso 2: División en X e y
+X_train, y_train = train_data.drop(columns=["default"]), train_data["default"].astype(int)
+X_test, y_test = test_data.drop(columns=["default"]), test_data["default"].astype(int)
+
+# Paso 3: Pipeline de clasificación
+categorical_features = ["SEX", "EDUCATION", "MARRIAGE"]
+numeric_features = [col for col in X_train.columns if col not in categorical_features]
+
+preprocessor = ColumnTransformer(
+    transformers=[
+        ("cat", OneHotEncoder(handle_unknown='ignore'), categorical_features),
+        ("num", MinMaxScaler(), numeric_features)
+    ]
+)
+
+pipeline = Pipeline([
+    ("preprocessor", preprocessor),
+    ("PCA", PCA()),
+    ("SelectKBest", SelectKBest(score_func=f_classif, k=15)),
+    ("MLPClassifier", MLPClassifier(hidden_layer_sizes=(100,), max_iter=500, random_state=42))
+])
+
+# Paso 4: Validación cruzada
+scores = cross_val_score(pipeline, X_train, y_train, cv=10, scoring='balanced_accuracy')
+print(f"Balanced accuracy CV score: {np.mean(scores)}")
+
+# Entrenar modelo final
+pipeline.fit(X_train, y_train)
+
+# Paso 5: Guardar modelo
+with gzip.open(model_path, "wb") as f:
+    import pickle
+    pickle.dump(pipeline, f)
+
+# Paso 6: Cálculo de métricas
+def compute_metrics(y_true, y_pred, dataset):
+    return {
+        'type': 'metrics',
+        "dataset": dataset,
+        "precision": float(precision_score(y_true, y_pred)),
+        "balanced_accuracy": float(balanced_accuracy_score(y_true, y_pred)),
+        "recall": float(recall_score(y_true, y_pred)),
+        "f1_score": float(f1_score(y_true, y_pred))
+    }
+
+metrics_train = compute_metrics(y_train, pipeline.predict(X_train), "train")
+metrics_test = compute_metrics(y_test, pipeline.predict(X_test), "test")
+
+# Paso 7: Matrices de confusión
+def compute_confusion_matrix(y_true, y_pred, dataset):
+    cm = confusion_matrix(y_true, y_pred)
+    return {
+        "type": "cm_matrix",
+        "dataset": dataset,
+        "true_0": {"predicted_0": int(cm[0, 0]), "predicted_1": int(cm[0, 1])},
+        "true_1": {"predicted_0": int(cm[1, 0]), "predicted_1": int(cm[1, 1])}
+    }
+
+cm_train = compute_confusion_matrix(y_train, pipeline.predict(X_train), "train")
+cm_test = compute_confusion_matrix(y_test, pipeline.predict(X_test), "test")
+
+# Guardar métricas
+with open(metrics_path, 'w') as f:
+    for item in [metrics_train, metrics_test, cm_train, cm_test]:
+        f.write(json.dumps(item) + "\n")
+
+print("Modelo entrenado y métricas guardadas.")
